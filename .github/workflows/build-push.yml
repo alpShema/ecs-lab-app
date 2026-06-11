@@ -22,7 +22,7 @@ env:
   ECS_CLUSTER: ecs-lab-cluster
   ECS_SERVICE: ecs-lab-service
   CONTAINER_NAME: ecs-lab-container
-#
+
 jobs:
   build-and-push:
     name: Build, Push, Update Pipeline Artifact
@@ -57,15 +57,15 @@ jobs:
           IMAGE_URI: ${{ steps.build-image.outputs.image }}
           S3_BUCKET: ${{ secrets.PIPELINE_ARTIFACT_BUCKET }}
         run: |
-          # Fetch role ARNs from CloudFormation outputs — no hardcoded secrets needed
+          # Fetch role ARNs from CloudFormation outputs — Cleaned query syntax
           TASK_EXEC_ROLE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name ecs-lab \
-            --query "Stacks[0].Outputs[?OutputKey=='TaskExecutionRoleArn'].OutputValue" \
+            --stack-name ecs-lab-main \
+            --query "Stacks.Outputs[?OutputKey=='TaskExecutionRoleArn'].OutputValue" \
             --output text)
 
           TASK_ROLE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name ecs-lab \
-            --query "Stacks[0].Outputs[?OutputKey=='TaskRoleArn'].OutputValue" \
+            --stack-name ecs-lab-main \
+            --query "Stacks.Outputs[?OutputKey=='TaskRoleArn'].OutputValue" \
             --output text)
 
           # taskdef.json — <IMAGE1_NAME> is replaced by CodePipeline at deploy time
