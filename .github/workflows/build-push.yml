@@ -35,7 +35,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -55,7 +55,7 @@ jobs:
       - name: Upload deployment artifacts to S3
         env:
           IMAGE_URI: ${{ steps.build-image.outputs.image }}
-          S3_BUCKET: ${{ secrets.PIPELINE_ARTIFACT_BUCKET }}
+          S3_BUCKET: ${{ vars.PIPELINE_ARTIFACT_BUCKET }}
         run: |
           # Fetch role ARNs from CloudFormation outputs — Cleaned query syntax
           TASK_EXEC_ROLE_ARN=$(aws cloudformation describe-stacks \
