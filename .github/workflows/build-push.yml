@@ -1,0 +1,114 @@
+name: Build and Push to ECR
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'pom.xml'
+      - 'appspec.yaml'
+
+# OIDC requires id-token: write permission
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  ECR_REPOSITORY: ecs-lab-app
+  ECS_CLUSTER: ecs-lab-cluster
+  ECS_SERVICE: ecs-lab-service
+  CONTAINER_NAME: ecs-lab-container
+
+jobs:
+  build-and-push:
+    name: Build, Push, Update Pipeline Artifact
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Upload deployment artifacts to S3
+        env:
+          IMAGE_URI: ${{ steps.build-image.outputs.image }}
+          S3_BUCKET: ${{ secrets.PIPELINE_ARTIFACT_BUCKET }}
+        run: |
+          # Fetch role ARNs from CloudFormation outputs — no hardcoded secrets needed
+          TASK_EXEC_ROLE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name ecs-lab-ecs \
+            --query "Stacks[0].Outputs[?OutputKey=='TaskExecutionRoleArn'].OutputValue" \
+            --output text)
+
+          TASK_ROLE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name ecs-lab-ecs \
+            --query "Stacks[0].Outputs[?OutputKey=='TaskRoleArn'].OutputValue" \
+            --output text)
+
+          # taskdef.json — <IMAGE1_NAME> is replaced by CodePipeline at deploy time
+          printf '{
+            "family": "ecs-lab-task",
+            "cpu": "512",
+            "memory": "1024",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "executionRoleArn": "%s",
+            "taskRoleArn": "%s",
+            "containerDefinitions": [{
+              "name": "ecs-lab-container",
+              "image": "<IMAGE1_NAME>",
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+              "essential": true,
+              "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                  "awslogs-group": "/ecs/ecs-lab",
+                  "awslogs-region": "eu-central-1",
+                  "awslogs-stream-prefix": "ecs"
+                }
+              },
+              "environment": [
+                {"name": "SERVER_PORT", "value": "8080"},
+                {"name": "SPRING_PROFILES_ACTIVE", "value": "prod"}
+              ],
+              "healthCheck": {
+                "command": ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"],
+                "interval": 30, "timeout": 5, "retries": 3, "startPeriod": 60
+              }
+            }]
+          }' "$TASK_EXEC_ROLE_ARN" "$TASK_ROLE_ARN" > taskdef.json
+
+          # imageDetail.json — tells CodePipeline the actual image URI to inject
+          printf '{"ImageURI": "%s"}' "$IMAGE_URI" > imageDetail.json
+
+          # Bundle all three into a zip for the CodePipeline S3 source stage
+          zip artifacts.zip taskdef.json imageDetail.json appspec.yaml
+          aws s3 cp artifacts.zip s3://$S3_BUCKET/artifacts.zip
+
+      - name: Summary
+        run: |
+          echo "### Image pushed to ECR" >> $GITHUB_STEP_SUMMARY
+          echo "**Image URI:** ${{ steps.build-image.outputs.image }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
