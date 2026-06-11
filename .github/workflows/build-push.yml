@@ -9,6 +9,7 @@ on:
       - 'Dockerfile'
       - 'pom.xml'
       - 'appspec.yaml'
+      - '.github/workflows/build-push.yml'
 
 # OIDC requires id-token: write permission
 permissions:
