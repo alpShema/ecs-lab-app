@@ -22,7 +22,7 @@ env:
   ECS_CLUSTER: ecs-lab-cluster
   ECS_SERVICE: ecs-lab-service
   CONTAINER_NAME: ecs-lab-container
-
+#
 jobs:
   build-and-push:
     name: Build, Push, Update Pipeline Artifact
