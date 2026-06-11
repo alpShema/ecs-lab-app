@@ -58,12 +58,12 @@ jobs:
         run: |
           # Fetch role ARNs from CloudFormation outputs — no hardcoded secrets needed
           TASK_EXEC_ROLE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name ecs-lab-ecs \
+            --stack-name ecs-lab \
             --query "Stacks[0].Outputs[?OutputKey=='TaskExecutionRoleArn'].OutputValue" \
             --output text)
 
           TASK_ROLE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name ecs-lab-ecs \
+            --stack-name ecs-lab \
             --query "Stacks[0].Outputs[?OutputKey=='TaskRoleArn'].OutputValue" \
             --output text)
 
