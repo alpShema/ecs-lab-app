@@ -68,12 +68,12 @@ jobs:
         run: |
           # Fetch role ARNs from CloudFormation outputs — Cleaned query syntax
           TASK_EXEC_ROLE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name ecs-lab \
+            --stack-name ecs-lab-main \
             --query "Stacks[0].Outputs[?OutputKey=='TaskExecutionRoleArn'].OutputValue" \
             --output text)
 
           TASK_ROLE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name ecs-lab \
+            --stack-name ecs-lab-main \
             --query "Stacks[0].Outputs[?OutputKey=='TaskRoleArn'].OutputValue" \
             --output text)
 
