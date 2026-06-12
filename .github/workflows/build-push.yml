@@ -108,6 +108,9 @@ jobs:
           zip artifacts.zip taskdef.json imageDetail.json appspec.yaml
           aws s3 cp artifacts.zip s3://$S3_BUCKET/artifacts.zip
 
+          # Start pipeline after upload is complete //(EventBridge on ECR push fires too early)
+          aws codepipeline start-pipeline-execution --name ecs-lab-pipeline
+
       - name: Summary
         run: |
           echo "### Image pushed to ECR" >> $GITHUB_STEP_SUMMARY
