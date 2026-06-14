@@ -1,7 +1,7 @@
 # ── Stage 1: Build ───────────────────────────────────────────────────────────
-# Uses the official Maven image with Java 21 to compile and package the app.
+# Uses the official Maven image with Amazon Corretto 21 to compile and package the app.
 # This stage is discarded after the build — only the JAR is kept.
-FROM maven:3.9.6-eclipse-temurin-21 AS build
+FROM maven:3.9.6-amazoncorretto-21 AS build
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ RUN mvn package -DskipTests -q
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 # Minimal JRE-only image — much smaller than the full JDK build image.
-FROM eclipse-temurin:21-jre-jammy
+FROM amazoncorretto:21-al2023-headless
 
 WORKDIR /app
 
