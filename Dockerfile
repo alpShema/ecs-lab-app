@@ -20,9 +20,10 @@ FROM amazoncorretto:21-al2023-headless
 
 WORKDIR /app
 
-# Create a non-root user — security best practice
-RUN groupadd --system appgroup && \
-    useradd --system --gid appgroup --no-create-home appuser
+# Create a non-root user — security best practice.
+# Amazon Linux uses adduser/addgroup instead of useradd/groupadd.
+RUN addgroup -S appgroup && \
+    adduser -S -G appgroup -H appuser
 
 # Copy only the built JAR from the build stage
 COPY --from=build /app/target/*.jar app.jar
@@ -37,7 +38,7 @@ EXPOSE 8080
 
 # Health check used by Docker and ECS
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8080/actuator/health || exit 1
+  CMD wget -q -O- http://localhost:8080/actuator/health || exit 1
 
 # Start the application
 ENTRYPOINT ["java", "-jar", "app.jar"]
