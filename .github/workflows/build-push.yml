@@ -1,5 +1,7 @@
 name: Build and Push to ECR
 
+# Runs on every push to main that touches application or deployment files.
+# Skips unrelated changes (docs, README, etc.) using the paths filter.
 on:
   push:
     branches:
@@ -11,17 +13,18 @@ on:
       - 'appspec.yaml'
       - '.github/workflows/build-push.yml'
 
-# OIDC requires id-token: write permission
+# id-token: write is required for GitHub OIDC — allows the workflow to
+# request a short-lived JWT and exchange it for temporary AWS credentials.
+# No long-lived AWS access keys are stored anywhere.
 permissions:
   id-token: write
   contents: read
 
+# All values come from GitHub repository variables (Settings → Variables).
+# Nothing is hardcoded — changing a value in GitHub takes effect on the next run.
 env:
-  AWS_REGION: eu-central-1
-  ECR_REPOSITORY: ecs-lab-app
-  ECS_CLUSTER: ecs-lab-cluster
-  ECS_SERVICE: ecs-lab-service
-  CONTAINER_NAME: ecs-lab-container
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
 
 jobs:
   build-and-push:
@@ -29,15 +32,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Pull the repository code onto the runner so we can build the Docker image.
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Exchange the GitHub OIDC token for temporary AWS credentials.
+      # The role (AWS_ROLE_ARN) is defined in CloudFormation and trusts only
+      # this repository on the main branch — no other repo can assume it.
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # Authenticate Docker against ECR so we can push images.
+      # Outputs the registry URL (e.g. 711387109786.dkr.ecr.eu-central-1.amazonaws.com)
+      # used to tag and push the image in the next step.
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -46,9 +56,14 @@ jobs:
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          # Tag the image with the exact git commit SHA for full traceability.
+          # Combined with ECR immutable tags, this guarantees every image can be
+          # traced back to the exact commit that produced it.
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Skip build if immutable tag already exists (re-run of same SHA)
+          # If this workflow is re-triggered for the same commit (e.g. a workflow
+          # file fix), the image tag already exists in ECR and cannot be overwritten
+          # (immutable tags). Skip the build — the image is identical anyway.
           if aws ecr describe-images \
               --repository-name $ECR_REPOSITORY \
               --image-ids imageTag=$IMAGE_TAG \
@@ -59,6 +74,8 @@ jobs:
             docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
             docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           fi
+
+          # Save the full image URI as a step output so the next step can reference it.
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
       - name: Upload deployment artifacts to S3
@@ -66,7 +83,9 @@ jobs:
           IMAGE_URI: ${{ steps.build-image.outputs.image }}
           S3_BUCKET: ${{ vars.PIPELINE_ARTIFACT_BUCKET }}
         run: |
-          # Fetch role ARNs from CloudFormation outputs — Cleaned query syntax
+          # Read the IAM role ARNs from the CloudFormation stack outputs at runtime.
+          # This avoids hardcoding ARNs — if the stack is updated, the new values
+          # are picked up automatically on the next workflow run.
           TASK_EXEC_ROLE_ARN=$(aws cloudformation describe-stacks \
             --stack-name ecs-lab-main \
             --query "Stacks[0].Outputs[?OutputKey=='TaskExecutionRoleArn'].OutputValue" \
@@ -77,7 +96,10 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='TaskRoleArn'].OutputValue" \
             --output text)
 
-          # taskdef.json — <IMAGE1_NAME> is replaced by CodePipeline at deploy time
+          # Build taskdef.json — the ECS task definition template.
+          # The image field uses <IMAGE1_NAME> as a placeholder.
+          # CodePipeline replaces it with the actual image URI from imageDetail.json
+          # before registering the new task definition revision.
           printf '{
             "family": "ecs-lab-task",
             "cpu": "512",
@@ -110,16 +132,22 @@ jobs:
             }]
           }' "$TASK_EXEC_ROLE_ARN" "$TASK_ROLE_ARN" > taskdef.json
 
-          # imageDetail.json — tells CodePipeline the actual image URI to inject
+          # imageDetail.json — tells CodePipeline which image URI to inject into
+          # the <IMAGE1_NAME> placeholder in taskdef.json during the deploy stage.
           printf '{"ImageURI": "%s"}' "$IMAGE_URI" > imageDetail.json
 
-          # Bundle all three into a zip for the CodePipeline S3 source stage
+          # Package all three deployment files into a single zip.
+          # CodePipeline reads this zip from S3 as the source artifact.
+          # appspec.yaml is checked out from the repo; the other two are generated above.
           zip artifacts.zip taskdef.json imageDetail.json appspec.yaml
           aws s3 cp artifacts.zip s3://$S3_BUCKET/artifacts.zip
 
-          # Start pipeline after upload is complete //(EventBridge on ECR push fires too early)
+          # Explicitly start the pipeline after the S3 upload is complete.
+          # The EventBridge rule also triggers on ECR push, but it fires before
+          # this step runs — meaning the S3 artifact would not exist yet.
           aws codepipeline start-pipeline-execution --name ecs-lab-pipeline
 
+      # Write a summary to the GitHub Actions run page showing what was deployed.
       - name: Summary
         run: |
           echo "### Image pushed to ECR" >> $GITHUB_STEP_SUMMARY
